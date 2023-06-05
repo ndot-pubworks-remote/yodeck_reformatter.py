@@ -4,17 +4,24 @@ import re
 import pandas as pd
 import argparse
 import warnings
+
+warnings.simplefilter(action='ignore', category=UserWarning)
+
 from openpyxl import Workbook
 from openpyxl.worksheet.dimensions import ColumnDimension, DimensionHolder
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-
-warnings.simplefilter(action='ignore', category=UserWarning)
+from openpyxl.utils.cell import column_index_from_string
 
 thin = Side(border_style="thin", color="000000")
 thick = Side(border_style="thick", color="000000")
-
+cell_range = None
+first_col = None
+last_col = None
+first_row = None
+last_row = None
+first_row_no_header = 2
 #get todays date for file path
 today = datetime.date.today()
 year = today.year
@@ -24,6 +31,7 @@ src_path = os.getcwd()
 #CMD argument for path overide
 parser = argparse.ArgumentParser()
 parser.add_argument('-f', '--file', help= 'Path to source excel file', required=False)
+parser.add_argument('-r', '--range', help= 'Excel Cell range to be included in export. Default tries to auto adjust. Use norma "A:B", or "B2:B5" formatting.', required=False)
 args = parser.parse_args()
 
 if (args.file):
@@ -46,28 +54,76 @@ else:
                     new_index = int(newest[1])
     full_path = path + f"{month}{new_index}.xlsx"
     
-print(f"\nUsing file as source: \"{full_path}\"")
+if (args.range):
+    trim_space = args.range.replace(" ", "")
+    trim_dollarsign = trim_space.replace("$", "")
+    trim_single_quotes = trim_dollarsign.replace("\'", "")
+    trim_double_quotes = trim_dollarsign.replace("\"", "")
+    cell_range = trim_double_quotes
 
+    first_col_matches = re.search(r"^(\D*)(?:\d?)+:(?:\D)+(?:\d?)+", cell_range)
+    if first_col_matches:
+        first_col_str = str(first_col_matches.group(1))
+        first_col = column_index_from_string(first_col_str) - 1
+    else:
+        first_col = None  
+
+    last_col_matches = re.search(r"^(?:\D)+(?:\d?)+:(\D*)(?:\d?)+", cell_range)
+    if last_col_matches:
+        last_col_str = str(last_col_matches.group(1))
+        last_col = column_index_from_string(last_col_str) - 1
+    else:
+        last_col = None
+        
+    first_row_matches = re.search(r"^(?:\D)+(\d*?):(?:\D)+(?:\d?)+$", cell_range)
+    if first_row_matches:
+        first_row = int(first_row_matches.group(1)) + 1
+        first_row_no_header = first_row + 1
+    else:
+        first_row = None
+        first_row_no_header = 2
+                  
+    last_row_matches = re.search(r"^(?:\D)+(?:\d?)+:(?:\D)+(\d*?)$", cell_range)
+    if last_row_matches:
+        last_row = int(last_row_matches.group(1)) + 1
+    else:
+        last_row = None
+
+
+print(f"\nUsing file as source: \"{full_path}\"")
 
 
 df = pd.read_excel(full_path, na_filter = False)
 
-#cleanup dataframe
-df = df.drop(df.columns[[0, 7, 8]],axis = 1)
-df = df.rename({'Unnamed: 2': '', 'Unnamed: 3': '', 'Unnamed: 4': '', 'Unnamed: 5': '', 'Unnamed: 6': ''}, axis=1)
-
 #make workbook from dataframe
+
+#cleanup dataframe
+if ((first_col is not None) and (last_col is not None)):
+    col_list = []
+    for cols_to_drop in range(0, df.shape[1]):
+        if ((cols_to_drop < first_col) or (cols_to_drop > last_col)):
+            col_list.append(cols_to_drop)
+    df = df.drop(df.columns[col_list],axis = 1)
+else:
+    df = df.drop(df.columns[[0, 7, 8]],axis = 1)
+
+#df = df.rename({'Unnamed: 2': '', 'Unnamed: 3': '', 'Unnamed: 4': '', 'Unnamed: 5': '', 'Unnamed: 6': ''}, axis=1)
+df.columns = df.columns.str.replace('Unnamed.*', '')
+
 wb = Workbook()
 ws = wb.active
 for r in dataframe_to_rows(df, index=False, header=True):
     ws.append(r)
-
+    
 #find row that has "comments" string, delete it and everything thereafter
-for row in ws.iter_rows():
-    for cell in row:
-        if "comments" in str(cell.value).lower():
-            ws.delete_rows(cell.row, ws.max_row)
-
+if (last_row is None):
+    for row in ws.iter_rows():
+        for cell in row:
+            if "comments" in str(cell.value).lower():
+                ws.delete_rows(cell.row, ws.max_row)
+else:
+    ws.delete_rows(last_row, ws.max_row)
+            
 #adjust column widths
 dim_holder = DimensionHolder(worksheet=ws)
 for index, col in enumerate(range(ws.min_column, ws.max_column + 1)):
@@ -88,7 +144,9 @@ for cell in ws["1:1"]:
     cell.border = Border(top=thick, left=thick, right=thick, bottom=thick)
 
 #format all cells except for date heading
-for row_index, row in enumerate(ws[f"2:{ws.max_row}"]):
+
+    
+for row_index, row in enumerate(ws[f"{first_row_no_header}:{ws.max_row}"]):
     for cell_index, cell in enumerate(row):
         if (row_index % 2 == 0):
             cell.fill = PatternFill(start_color="C7E1B5", end_color="C7E1B5", fill_type = "solid")
@@ -96,14 +154,14 @@ for row_index, row in enumerate(ws[f"2:{ws.max_row}"]):
         if (row_index != (ws.max_row - 2)):
             if (cell_index == 0):
                 cell.border = Border(left=thick, bottom=thin)
-            elif (cell_index == 5):
+            elif (cell_index == last_col):
                 cell.border = Border(right=thick, bottom=thin)
             else:
                 cell.border = Border(bottom=thin)
         else:
             if (cell_index == 0):
                 cell.border = Border(left=thick, bottom=thick)
-            elif (cell_index == 5):
+            elif (cell_index == last_col):
                 cell.border = Border(right=thick, bottom=thick)
             else:
                 cell.border = Border(bottom=thick)
