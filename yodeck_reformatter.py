@@ -19,6 +19,8 @@ thick = Side(border_style="thick", color="000000")
 today = datetime.date.today()
 year = today.year
 month = today.strftime("%B").upper()
+month_abr = today.strftime("%b").upper()
+month_list = [month, month_abr, month.casefold(), month_abr.casefold()]
 src_path = os.getcwd()
 
 #CMD argument for path overide
@@ -34,21 +36,31 @@ if (args.file):
     full_path = os.path.abspath(args.file)
 else:
     #get newest file by default
-    path = src_path + f'\\{year}\\{month}\\'
-    dir_list = os.listdir(path)
     new_index = 0
-    for file in dir_list:
-        if month in file:
-            regex = re.escape(month) + r"(\d\d?).xlsx"
-            newest = re.match(regex, file)
-            if (newest):
-                if (int(newest[1]) > new_index):
-                    new_index = int(newest[1])
-    full_path = path + f"{month}{new_index}.xlsx"
-    
-print(f"\nUsing file as source: \"{full_path}\"")
+    current_file = ""
+    current_path = ""
+    for index, path_month in enumerate(month_list):
+        path = src_path + f'\\{year}\\{path_month}\\'
+        try:
+            dir_list = os.listdir(path)
+            for file in dir_list:
+                if (month.casefold() in file.casefold() or month_abr.casefold() in file.casefold()):
+                    regex = r"(" + re.escape(month.casefold()) + r"|" + re.escape(month_abr.casefold()) + r")(\d\d?).xlsx"
+                    newest = re.match(regex, file.casefold())
+                    if (newest):
+                        if (int(newest[2]) > new_index):
+                            new_index = int(newest[2])
+                            current_file = file
+                            current_path = path
+        except OSError as e:
+            if (index == len(month_list) - 1):
+                raise Exception(f'Unable to find a suitable path for {src_path}\\{year}\\{month} or {src_path}\\{year}\\{month_abr}.')
 
-
+    if (new_index < 1):
+        raise Exception(f'No files found with keywords {month} or {month_abr} in filename.')
+    else:
+        full_path = current_path + f"{current_file}"
+        print(f"\nUsing file as source: \"{full_path}\"")
 
 df = pd.read_excel(full_path, na_filter = False)
 
@@ -131,6 +143,8 @@ ws.page_setup.fitToPage = True
 ws.print_options.gridLines = True
 
 #save
-wb.save("yodeck.xlsx")
-
-print(f"\nFile successfully exported: \"{src_path}\\yodeck.xlsx\"")
+try:
+    wb.save("yodeck.xlsx")
+    print(f"\nFile successfully exported: \"{src_path}\\yodeck.xlsx\"")
+except Exception as e:
+    print(e)
